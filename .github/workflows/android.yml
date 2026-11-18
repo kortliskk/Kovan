@@ -1,0 +1,76 @@
+name: KOVAN Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'KOVAN-Android-0.1.0.zip'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Extract project and build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Find uploaded project ZIP
+        id: project
+        shell: bash
+        run: |
+          ZIP_FILE="KOVAN-Android-0.1.0.zip"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "::error::Repository root must contain $ZIP_FILE"
+            exit 1
+          fi
+
+      - name: Extract Android project
+        shell: bash
+        run: |
+          mkdir -p extracted
+          unzip -q "KOVAN-Android-0.1.0.zip" -d extracted
+
+          PROJECT_DIR="$(find extracted -type f -name settings.gradle.kts -print -quit | xargs -r dirname)"
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "::error::settings.gradle.kts was not found in the ZIP."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Android project found at: $PROJECT_DIR"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          cd "$PROJECT_DIR"
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: KOVAN-debug-apk
+          path: extracted/**/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
