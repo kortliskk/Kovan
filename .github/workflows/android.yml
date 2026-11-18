@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'KOVAN-Android-0.1.0.zip'
+      - 'KOVAN-Android-0.1.1.zip'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -26,9 +26,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # GitHub-hosted Ubuntu runners already include the Android SDK.
-      # Avoid android-actions/setup-android here: it can fail while trying
-      # to install the obsolete "tools" package.
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
       - name: Configure Android SDK
         shell: bash
         run: |
@@ -36,48 +38,41 @@ jobs:
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-
           SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 3 -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [ -z "$SDKMANAGER" ]; then
             echo "::error::sdkmanager was not found under $SDK_ROOT/cmdline-tools"
             exit 1
           fi
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
 
-      - name: Accept licenses and install Android 36 SDK
+      - name: Install Android SDK 36
         shell: bash
         run: |
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Find and extract Android project ZIP
+      - name: Extract project ZIP
         shell: bash
         run: |
-          ZIP_FILE="KOVAN-Android-0.1.0.zip"
+          ZIP_FILE="KOVAN-Android-0.1.1.zip"
           if [ ! -f "$ZIP_FILE" ]; then
             echo "::error::Upload $ZIP_FILE to the repository root."
             exit 1
           fi
-
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
-
           PROJECT_DIR="$(find extracted -type f -name settings.gradle.kts -print -quit | xargs -r dirname)"
           if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::Could not find settings.gradle.kts inside the ZIP."
+            echo "::error::settings.gradle.kts was not found inside the ZIP."
             exit 1
           fi
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project directory: $PROJECT_DIR"
 
       - name: Build debug APK
         shell: bash
         run: |
           cd "$PROJECT_DIR"
-          chmod +x ./gradlew
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          gradle --no-daemon --stacktrace assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
