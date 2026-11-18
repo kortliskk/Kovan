@@ -20,45 +20,57 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Find uploaded project ZIP
-        id: project
-        shell: bash
-        run: |
-          ZIP_FILE="KOVAN-Android-0.1.0.zip"
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "::error::Repository root must contain $ZIP_FILE"
-            exit 1
-          fi
-
-      - name: Extract Android project
-        shell: bash
-        run: |
-          mkdir -p extracted
-          unzip -q "KOVAN-Android-0.1.0.zip" -d extracted
-
-          PROJECT_DIR="$(find extracted -type f -name settings.gradle.kts -print -quit | xargs -r dirname)"
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::settings.gradle.kts was not found in the ZIP."
-            exit 1
-          fi
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project found at: $PROJECT_DIR"
-
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      # GitHub-hosted Ubuntu runners already include the Android SDK.
+      # Avoid android-actions/setup-android here: it can fail while trying
+      # to install the obsolete "tools" package.
+      - name: Configure Android SDK
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 3 -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager was not found under $SDK_ROOT/cmdline-tools"
+            exit 1
+          fi
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+
+      - name: Accept licenses and install Android 36 SDK
+        shell: bash
+        run: |
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Find and extract Android project ZIP
+        shell: bash
+        run: |
+          ZIP_FILE="KOVAN-Android-0.1.0.zip"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "::error::Upload $ZIP_FILE to the repository root."
+            exit 1
+          fi
+
+          mkdir -p extracted
+          unzip -q "$ZIP_FILE" -d extracted
+
+          PROJECT_DIR="$(find extracted -type f -name settings.gradle.kts -print -quit | xargs -r dirname)"
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "::error::Could not find settings.gradle.kts inside the ZIP."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project directory: $PROJECT_DIR"
 
       - name: Build debug APK
         shell: bash
